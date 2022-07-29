@@ -1,0 +1,70 @@
+v3.0:
+
+Added:
+- You can now save a preset and set it to run automatically on startup, and will load if run manually. If it starts automatically on startup, it will wait for "discord.exe" to run. See the "details" section for more information.
+
+Changed:
+- The "Example" preset is no longer copied to the preset folder. Discord RPC Maker takes it directly from its cache, so the user can no longer modify it.
+
+Fixed:
+- It is no longer possible to create a preset with these names: RAM/CPU, Current Activity. This caused the presets to be overwritten when update_presets_dropdown was run.
+- Popup window not having MMA.ico icon.
+
+Other:
+- Unified quotes.
+- The size parameter of the QueueEvents class is now named max_size to be more explicit.
+- Created a is_valid_preset_file function to check if a preset file is valid. Used in build_presets_dropdown and to check if preset file is valid when loading a preset.
+- Added a Config class. See the "details" section for more information.
+- Added a create_shortcut, is_process_running, is_valid_preset_file function.
+- Added path variables
+- config_format to preset_format, to be more correct.
+
+Details:
+- Preset start-up:
+    - It creates a shortcut in `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup` that has as a parameter (the name of the preset) which is runned by Windows on startup.
+    - When Windows execute the shortcut it sends 2 parameters (the path of the exe, and "--start-up"), the program will then load the preset found in the config.ini file.
+    - During development, the program would receive the preset name from the shortcut and, if run manually, load it from the config.ini file. But to make sure that there are not two different preset names if the user wants to modify the files, it was changed to have only the preset name in the config.ini file and the shortcut just sending the "--start-up" parameter. It makes the code easier but removes a potential "feature" that would have allowed the user to create custom shortcuts on their desktop with different preset names as arguments.
+- Config class:
+    - The Config class uses configparser and has been made because by default it doesn't directly write to the config file or handle the error if you try to write to a section that doesn't exist yet. This class has been made to solve those problems, the set method always write and create the section if it doesn't exist.
+- Paths:
+    - `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup` is the path where the auto start-up shortcut is created.
+    - `%UserProfile%\.TheGeeKing\Discord-RPC-Maker` is where the files are stored.
+
+v2.1:
+
+Added:
+- Creates .TheGeeKing\Discord-RPC-Maker\presets\Example.json if it doesn't exists in user's home directory (%USERPROFILE%).
+
+Changed:
+- Refactored the whole code, code now follows this format:
+1. Import
+2. Class declarations
+3. Function declarations
+4. if __name__ == "__main__": CODE
+- The queue now uses tuples (message, title) and returns tuple with (message, title), if message is only provided default title will be "Error".
+- Changed syntax of `-INPUT-PRESET-` to `-INPUT_PRESET-` to follow previous syntax style. And updated tooltip.
+- Added some type hints to functions return type and variables.
+- event `-CLEAR-` now calls a clear_fields function.
+- Added some docstrings and comments.
+
+Fixed:
+- Presets were saved temporarily in sys._MEIPASS, they are now correctly saved in %USERPROFILE%\.TheGeeKing\Discord-RPC-Maker\presets\.
+- The queue now has a limit, so if something is wrong and you don't correct it, the queue does not fill up indefinitely.
+- The queue doesn't accept something already in it, no more duplicate errors in the queue.
+- Old style string being sent to the queue, displaying wrongly due to incorrect format. Now, it appends a tuple with (message, title)
+- When RPC was running the preset field wasn't cleared if it was a custom preset when "-PRESETS-" event was fired due to statement checking ButtonText == 'ON'
+
+v2.0:
+
+Added:
+- You can now Save/Delete presets!
+- Added to some variable their explicit type.
+
+Changed:
+- Presets dropdown menu is now readonly and has a tooltip.
+- Window is now directly finalize to update presets after.
+- Window is closed and then all processes are closed.
+- Changed the way popup from the queue are handled
+
+Fixed:
+- Quotes in input fields were raising error due to wrong handling when creating parameters for RPC.

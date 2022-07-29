@@ -1,10 +1,11 @@
 import asyncio
+import configparser
 import contextlib
 import json
 import os
-import shutil
 import sys
 import threading
+import time
 import webbrowser
 from os import chdir
 from time import sleep
@@ -16,9 +17,10 @@ import win32gui
 import win32process
 from pypresence import Presence
 from validators import url
+from win32com.client import Dispatch
 
 
-class QueueEvents():
+class QueueEvents(): #TODO: use python queue and update put method to check if already in queue
     """
     This class is a helper class that will be used to pass PySimpleGUI events that need to be run in main thread.
 
@@ -28,12 +30,12 @@ class QueueEvents():
     2. pop: This method will return the first event in the queue to be executed and removes it from the queue.
     """
 
-    def __init__(self, size: int = 2):
+    def __init__(self, max_size: int = 2):
         self.queue = []
-        self.size = size # The number of popup display will be +1 due to the fact that the first one will be instantly displayed while 2 others will stay in the queue.
+        self.max_size = max_size # The number of popup display will be +1 due to the fact that the first one will be instantly displayed while 2 others will stay in the queue.
 
     def append(self, other) -> list[tuple]:
-        if len(self.queue) == self.size:
+        if len(self.queue) == self.max_size:
             self.queue.pop(0)
         if other in self.queue:
             return self.queue
@@ -43,6 +45,40 @@ class QueueEvents():
     def pop(self) -> tuple:
         if self.queue:
             return self.queue.pop(0)
+
+
+class Config: #TODO: use python configparser and update the set and write method
+    def __init__(self, path):
+        self.path = path
+        self.config = configparser.ConfigParser()
+        self.read()
+
+    def read(self):
+        self.config.read(self.path)
+        return self.config
+
+    def write(self):
+        with open(self.path, "w", encoding="utf-8") as configfile:
+            self.config.write(configfile, space_around_delimiters=False)
+
+    def has_section(self, section):
+        return self.config.has_section(section)
+
+    def has_option(self, section, option):
+        return self.config.has_option(section, option)
+
+    def add_section(self, section):
+        self.config.add_section(section)
+        self.write()
+
+    def set(self, section, option, value):
+        if not self.has_section(section):
+            self.add_section(section)
+        self.config.set(section, option, value)
+        self.write()
+
+    def get(self, section, option):
+        return self.config.get(section, option)
 
 
 def ram_cpu() -> tuple[str, str]:
@@ -207,6 +243,25 @@ def set_rpc_current_window(app_id):
     RPC.close()
 
 
+def is_valid_preset_file(file_: str, output_error: bool = False) -> bool:
+    # verify that the file is valid and has the all the keys in the preset_format
+    if not file_.endswith('.json') or not os.path.isfile(os.path.join(presets_dir, file_)):
+        return False
+    if file_ != "Example.json":
+        with open(os.path.join(presets_dir, file_), 'r') as f:
+            try:
+                data = json.load(f)
+                if all(key in data for key in preset_format):
+                    return True
+                if output_error:
+                    x = '\n'.join(preset_format) # due to the fact that: SyntaxError: f-string expression part cannot include a backslash. When f"{'\n'join()}""
+                    queue.append(f"{file_} is not a valid preset file.\nFormat:\n{x}\nare required even if empty.")
+                return False
+            except Exception as e:
+                if output_error: queue.append(f"{file_} is not a valid preset file. It is not a valid JSON file.\n{e}")
+                return False
+
+
 def build_presets_dropdown() -> dict[str, Callable]:
     presets: dict[str, Callable] = {
     "": "",
@@ -215,26 +270,10 @@ def build_presets_dropdown() -> dict[str, Callable]:
     "Example": set_rpc
     }
 
-    config_filename = []
+    preset_filename = [file_ for file_ in os.listdir(presets_dir) if is_valid_preset_file(file_, output_error=True)]
 
-    for file_ in os.listdir(presets_dir):
-        if file_.endswith('.json') and os.path.isfile(os.path.join(presets_dir, file_)):
-            if file_ == "Example.json":
-                continue
-            # verify that the file is valid and has the key in the config_format
-            with open(os.path.join(presets_dir, file_), 'r') as f:
-                try:
-                    data = json.load(f)
-                    if all(key in data for key in config_format):
-                        config_filename.append(file_)
-                    else:
-                        x = '\n'.join(config_format) # due to the fact that: SyntaxError: f-string expression part cannot include a backslash. When '\n'join() in f'{}'
-                        queue.append(f"{file_} is not a valid config file.\nFormat:\n{x}\nare required even if empty.")
-                except Exception as e:
-                    queue.append(f"{file_} is not a valid config file. It is not a valid JSON file.\n{e}")
-
-    for config in config_filename:
-        presets[config[:-5]] = set_rpc
+    for preset in preset_filename:
+        presets[preset[:-5]] = set_rpc
 
     return presets
 
@@ -255,12 +294,47 @@ def clear_fields():
             window[element].Update('')
 
 
+def create_shortcut(path, target="", w_dir="", icon="", arguments=""):
+    shell = Dispatch("WScript.Shell")
+    shortcut = shell.CreateShortCut(path)
+    shortcut.Targetpath = target
+    shortcut.Arguments = f"\"{arguments}\""
+    shortcut.WorkingDirectory = w_dir
+    shortcut.WindowStyle = 7
+    if icon != "":
+        shortcut.IconLocation = icon
+    shortcut.save()
+
+
+def is_process_running(process_running):
+    """
+    Check if there is any running process that contains the given name process_running.
+    """
+    #Iterate over the all the running process
+    for proc in psutil.process_iter():
+        with contextlib.suppress(psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            # Check if process name contains the given name string.
+            if process_running.lower() in proc.name().lower():
+                return True
+    return False
+
+
 if __name__ == "__main__":
 
-    if getattr(sys, 'frozen', False): # Running as compiled
+    if getattr(sys, "frozen", False): # Running as compiled
         chdir(sys._MEIPASS) # change current working directory to sys._MEIPASS
 
+    if len(sys.argv) > 1: # if it starts from start-up
+        while not is_process_running("discord.exe"):
+            time.sleep(10) # check if discord is running every 10 seconds
+        sleep(10) # wait for discord to load, so RPC is not runned while discord is loading and not ready yet
+
     """This part creates if it doesn't exist the needed directories and make sure the Example.json file exists in the user's home directory."""
+    temp_dir = os.path.dirname(os.path.abspath(os.path.realpath(__file__)))
+    file_path = os.path.abspath(os.path.realpath(sys.argv[0])) # file path of the current file
+    file_dir = os.path.dirname(file_path) # directory of the current file
+    appdata_dir = os.getenv("APPDATA")
+    startup_dir = os.path.join(appdata_dir, r"Microsoft\Windows\Start Menu\Programs\Startup")
     home_dir = os.path.expanduser("~")
     thegeeking_dir = os.path.join(home_dir, ".TheGeeKing")
     discord_rpc_maker_dir = os.path.join(thegeeking_dir, "Discord-RPC-Maker")
@@ -271,9 +345,15 @@ if __name__ == "__main__":
     if not os.path.exists(discord_rpc_maker_dir): os.mkdir(discord_rpc_maker_dir)
     # create a presets folder if it doesn't exist
     if not os.path.exists(presets_dir): os.mkdir(presets_dir)
-    # check if Example.json exists in the presets folder if not copy it from ./config/Example.json
-    if not os.path.exists(os.path.join(presets_dir, "Example.json")):
-        shutil.copy("./config/Example.json", presets_dir)
+    # if config.ini doesn't exist, create it and write the default values
+    if not os.path.exists(os.path.join(discord_rpc_maker_dir, "config.ini")):
+        with open(os.path.join(discord_rpc_maker_dir, "config.ini"), "w", encoding="utf-8") as f:
+            f.write("")
+    config = Config(os.path.join(discord_rpc_maker_dir, "config.ini"))
+    if not config.has_section("config"):
+        config.set("config", "start-up", "")
+    elif not config.has_option("config", "start-up"):
+        config.set("config", "start-up", "")
 
     queue = QueueEvents()
 
@@ -292,7 +372,7 @@ if __name__ == "__main__":
     "Button 2 URL:": {"key": "-BUTTON2_URL-", "tooltip": "The URL of the second button."}
     }
 
-    sg.theme('DarkAmber')
+    sg.theme("DarkAmber")
     layout = [[sg.Text("* fields are mandatory | RPC is updated every 15 seconds (ratelimit)")]]
 
     layout.extend([sg.Text(text, size=(20, 1)), sg.Input(key=key["key"], tooltip=key["tooltip"])] for text, key in fields.items())
@@ -300,8 +380,8 @@ if __name__ == "__main__":
     layout.append(
         [
             [
-                sg.Text('Presets:'),
-                sg.Combo("", key='-PRESETS-', enable_events=True, readonly=True, size=15, tooltip='Select a preset'),
+                sg.Text("Presets:"),
+                sg.Combo("", key="-PRESETS-", enable_events=True, readonly=True, size=15, tooltip="Select a preset"),
                 sg.Push(),
                 sg.Input("", key="-INPUT_PRESET-", size=(20, 1), tooltip="Enter a preset name to save or delete it."),
                 sg.Button("Save", key="-SAVE-", button_color="lightblue"),
@@ -309,18 +389,45 @@ if __name__ == "__main__":
             ],
             [
                 sg.Button("ON", key="-SWITCH-", button_color="green"),
-                sg.Button("Clear", key="-CLEAR-", button_color="grey")
+                sg.Button("Clear", key="-CLEAR-", button_color="grey"),
+                sg.Push(),
+                sg.Button("Remove auto start-up", key="-AUTO_STARTUP-", tooltip="Remove the auto start-up shortcut.\n(%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup)", button_color="grey", visible=False)
             ],
         ]
     )
 
 
-    window = sg.Window('Discord RPC Maker', layout=layout, icon="MMA.ico", finalize=True)
+    window = sg.Window("Discord RPC Maker", layout=layout, icon="MMA.ico", finalize=True)
 
-    config_format = list(fields)
+    preset_format = list(fields)
     elements_key = [value["key"] for value in fields.values()]
 
     presets: dict[str, Callable] = update_presets_dropdown()
+
+    """If it starts from start-up"""
+    auto_start = 0
+    if len(sys.argv) > 1:
+        if config.get("config", "start-up") == "" or not is_valid_preset_file(config.get("config", "start-up")): # auto start-up is invalid, shortcut and config is reset
+            if os.path.exists(os.path.join(startup_dir, "Discord RPC Maker - Startup.lnk")):
+                os.remove(os.path.join(startup_dir, "Discord RPC Maker - Startup.lnk"))
+            config.set("config", "start-up", "")
+        else: # auto start-up is valid
+            window["-PRESETS-"].Update(config.get("config", "start-up"))
+            window.write_event_value("-PRESETS-", config.get("config", "start-up"))
+            auto_start = 1
+            window["-AUTO_STARTUP-"].Update(visible=True)
+            window.minimize()
+    elif config.get("config", "start-up") != "" and os.path.exists(os.path.join(startup_dir, "Discord RPC Maker - Startup.lnk")): #If manually started by user, check if the config.ini start-up isn't empty and that the startup shortcut exists and if so display the button to remove it and fill the fields with the preset selected as start-up.
+        if not is_valid_preset_file(config.get("config", "start-up")): # start-up is invalid, shortcut and config is reset
+            if os.path.exists(os.path.join(startup_dir, "Discord RPC Maker - Startup.lnk")):
+                os.remove(os.path.join(startup_dir, "Discord RPC Maker - Startup.lnk"))
+            config.set("config", "start-up", "")
+        else: # start-up is valid
+            window["-PRESETS-"].Update(config.get("config", "start-up"))
+            window.write_event_value("-PRESETS-", config.get("config", "start-up"))
+            window["-AUTO_STARTUP-"].Update(visible=True)
+    elif config.get("config", "start-up") != "" and not os.path.exists(os.path.join(startup_dir, "Discord RPC Maker - Startup.lnk")):
+        config.set("config", "start-up", "")
 
     while True:
         event, values = window.Read(timeout=100) # read every 1/10 second (100ms) to update the RPC if changed while running
@@ -330,9 +437,9 @@ if __name__ == "__main__":
             os._exit(0)
         elif queue.queue: # if a thread added something to the queue it will show it here in a popup_error
             """queue.pop() should return a tuple containing as 0 the message and as 1 the title.
-            if the len of the tuple returned by queue.pop() == 1 then the title is by default \"Error\""""
+            if the len of the tuple returned by queue.pop() == 1 then the title is by default 'Error'"""
             queue_pop = queue.pop()
-            sg.popup_error(queue_pop[0], title="Error" if len(queue_pop) == 1 else queue_pop[1])
+            sg.popup_error(queue_pop[0], title="Error" if len(queue_pop) == 1 else queue_pop[1], icon="MMA.ico")
         elif event == "-SWITCH-" and values["-APP_ID-"].isdecimal() and len(values["-APP_ID-"]) == 18 and window["-SWITCH-"].ButtonText == 'ON' and values["-PRESETS-"] == "": # standard RPC with no preset
             thread = threading.Thread(target=set_rpc, args=(values["-APP_ID-"], ))
             thread.do_run = True
@@ -354,13 +461,16 @@ if __name__ == "__main__":
             thread.do_run = True
             thread.start()
         elif event == "-PRESETS-" and values["-PRESETS-"] != "" and presets[values["-PRESETS-"]] == set_rpc:
-            with open(os.path.join(presets_dir, f"{values['-PRESETS-']}.json"), 'r', encoding='utf-8') as f:
+            with open(os.path.join(presets_dir, f"{values['-PRESETS-']}.json") if values["-PRESETS-"] != "Example" else r"config\Example.json", 'r', encoding='utf-8') as f:
                 data = json.load(f)
             for key, key_ in zip(elements_key, data.keys()):
                 window[key].Update(data[key_])
-            window["-PRESETS-"].Update(data["Presets"])
+            window["-PRESETS-"].Update(data["Preset"])
+            if auto_start:
+                window["-SWITCH-"].click()
+                auto_start = 0
         elif event == "-SWITCH-" and window["-SWITCH-"].ButtonText == 'ON' and not values["-APP_ID-"].isdecimal() and len(values["-APP_ID-"]) != 18:
-            response = sg.popup_yes_no("Application ID must be 18 digits long. Would you like to be redirected to the discord webpage to get your application ID?")
+            response = sg.popup_yes_no("Application ID must be 18 digits long. Would you like to be redirected to the discord webpage to get your application ID?", icon="MMA.ico")
             if response == "Yes":
                 webbrowser.open("https://discord.com/developers/applications")
         elif event == "-SWITCH-" and window["-SWITCH-"].ButtonText == 'OFF':
@@ -369,35 +479,45 @@ if __name__ == "__main__":
         elif event == "-CLEAR-":
             clear_fields()
         elif event == "-SAVE-":
-            if values["-INPUT_PRESET-"] == "Example":
-                sg.popup_ok("You can't save a preset with the name 'Example'.")
+            if values["-INPUT_PRESET-"] in ["Example", "RAM/CPU", "Current Activity"]:
+                sg.popup_ok(f"You can't save a preset with the name \'{values['-INPUT_PRESET-']}\'.", icon="MMA.ico")
             elif values["-INPUT_PRESET-"] != "":
                 try:
-                    v: dict[str, str] = {key: values[key_] for key, key_ in zip(config_format, elements_key)}
-                    v["Presets"] = values["-PRESETS-"]
-
+                    v: dict[str, str] = {key: values[key_] for key, key_ in zip(preset_format, elements_key)}
+                    v["Preset"] = values["-PRESETS-"]
+                    answer = sg.popup_yes_no("Do you want this preset to be executed at start-up?", icon="MMA.ico")
+                    if answer == "Yes":
+                        create_shortcut(os.path.join(startup_dir, "Discord RPC Maker - Startup.lnk"), file_path, file_dir, os.path.join(temp_dir, "MMA.ico"), "--start-up")
+                        window["-AUTO_STARTUP-"].Update(visible=True)
+                        config.set("config", "start-up", values["-INPUT_PRESET-"])
                     with open(os.path.join(presets_dir, f"{values['-INPUT_PRESET-']}.json"), 'w', encoding='utf-8') as f:
                         json.dump(v, f, indent=4)
 
-                    sg.popup_ok("Preset saved!")
+                    sg.popup_ok("Preset saved!", icon="MMA.ico")
                 except Exception as e:
-                    sg.popup_error(f"{e}", title="Error")
+                    sg.popup_error(f"{e}", title="Error", icon="MMA.ico")
                 window["-INPUT_PRESET-"].Update("")
 
                 presets: dict[str, Callable] = update_presets_dropdown()
             else:
-                sg.popup_error("Please enter a preset name.", title="Error")
+                sg.popup_error("Please enter a preset name.", title="Error", icon="MMA.ico")
         elif event == "-DELETE-":
             if values["-INPUT_PRESET-"] == "Example":
-                sg.popup_ok("You cannot delete the preset 'Example'.")
+                sg.popup_ok("You cannot delete the preset 'Example'.", icon="MMA.ico")
             elif values["-INPUT_PRESET-"] != "":
                 try:
                     os.remove(os.path.join(presets_dir, f"{values['-INPUT_PRESET-']}.json"))
-                    sg.popup_ok("Successfully deleted preset.", title="Success")
+                    sg.popup_ok("Successfully deleted preset.", title="Success", icon="MMA.ico")
                 except Exception as e:
-                    sg.popup_error(f"{e}", title="Error")
+                    sg.popup_error(f"{e}", title="Error", icon="MMA.ico")
                 window["-INPUT_PRESET-"].Update("")
 
                 presets: dict[str, Callable] = update_presets_dropdown()
             else:
-                sg.popup_error("Please enter a preset name.", title="Error")
+                sg.popup_error("Please enter a preset name.", title="Error", icon="MMA.ico")
+        elif event == "-AUTO_STARTUP-":
+            if os.path.exists(os.path.join(startup_dir, "Discord RPC Maker - Startup.lnk")):
+                os.remove(os.path.join(startup_dir, "Discord RPC Maker - Startup.lnk"))
+                config.set("config", "start-up", "")
+                window["-AUTO_STARTUP-"].Update(visible=False)
+                sg.popup_ok("Successfully removed startup shortcut.", title="Success", icon="MMA.ico")
