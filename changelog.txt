@@ -1,3 +1,9 @@
+v3.1:
+
+Fixed:
+- When checking if start-up preset was a valid preset, the name of the file was only passed and not the file extension, causing instant False return and deleting the start-up shortcut.
+
+
 v3.0:
 
 Added:
@@ -30,6 +36,7 @@ Details:
     - `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup` is the path where the auto start-up shortcut is created.
     - `%UserProfile%\.TheGeeKing\Discord-RPC-Maker` is where the files are stored.
 
+
 v2.1:
 
 Added:
@@ -53,6 +60,7 @@ Fixed:
 - The queue doesn't accept something already in it, no more duplicate errors in the queue.
 - Old style string being sent to the queue, displaying wrongly due to incorrect format. Now, it appends a tuple with (message, title)
 - When RPC was running the preset field wasn't cleared if it was a custom preset when "-PRESETS-" event was fired due to statement checking ButtonText == 'ON'
+
 
 v2.0:
 

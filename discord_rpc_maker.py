@@ -407,7 +407,7 @@ if __name__ == "__main__":
     """If it starts from start-up"""
     auto_start = 0
     if len(sys.argv) > 1:
-        if config.get("config", "start-up") == "" or not is_valid_preset_file(config.get("config", "start-up")): # auto start-up is invalid, shortcut and config is reset
+        if config.get("config", "start-up") == "" or not is_valid_preset_file(f"{config.get('config', 'start-up')}.json"): # auto start-up is invalid, shortcut and config is reset
             if os.path.exists(os.path.join(startup_dir, "Discord RPC Maker - Startup.lnk")):
                 os.remove(os.path.join(startup_dir, "Discord RPC Maker - Startup.lnk"))
             config.set("config", "start-up", "")
@@ -418,7 +418,7 @@ if __name__ == "__main__":
             window["-AUTO_STARTUP-"].Update(visible=True)
             window.minimize()
     elif config.get("config", "start-up") != "" and os.path.exists(os.path.join(startup_dir, "Discord RPC Maker - Startup.lnk")): #If manually started by user, check if the config.ini start-up isn't empty and that the startup shortcut exists and if so display the button to remove it and fill the fields with the preset selected as start-up.
-        if not is_valid_preset_file(config.get("config", "start-up")): # start-up is invalid, shortcut and config is reset
+        if not is_valid_preset_file(f"{config.get('config', 'start-up')}.json"): # start-up is invalid, shortcut and config is reset
             if os.path.exists(os.path.join(startup_dir, "Discord RPC Maker - Startup.lnk")):
                 os.remove(os.path.join(startup_dir, "Discord RPC Maker - Startup.lnk"))
             config.set("config", "start-up", "")
